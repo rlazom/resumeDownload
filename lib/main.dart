@@ -110,9 +110,6 @@ class _MyHomePageState extends State<MyHomePage> {
       }
 
       sumSizes = sizes.fold(0, (p, c) => p + c);
-
-      print('sumSizes: "$sumSizes", sizes: "$sizes"');
-
       localText +=
           '\n\nsize: ${filesize(sumSizes)}/${filesize(fileOriginSize)}';
       localText += '\nbytes: $sumSizes/$fileOriginSize';
@@ -376,7 +373,9 @@ class _MyHomePageState extends State<MyHomePage> {
                   ? null
                   : percent == null
                       ? _download
-                      : localNotifier.value != null ? _download : _cancel,
+                      : localNotifier.value != null
+                          ? _download
+                          : _cancel,
               tooltip: percent == null ? 'Download' : 'Cancel',
               backgroundColor:
                   percent == 0 || percent == 1 ? Colors.grey : null,
@@ -386,7 +385,9 @@ class _MyHomePageState extends State<MyHomePage> {
                       ? Icons.download_done
                       : percent == null
                           ? Icons.download
-                          : localNotifier.value != null ? Icons.download : Icons.close),
+                          : localNotifier.value != null
+                              ? Icons.download
+                              : Icons.close),
             );
           }),
     );
