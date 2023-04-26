@@ -1,15 +1,19 @@
-# resume_download
+# Resume Download
 
-A new Flutter project.
+A Flutter demo project to handle downloads with dio.
 
 ## Getting Started
 
-This project is a starting point for a Flutter application.
+This project is a starting point for a Flutter application with downloads.
 
-A few resources to get you started if this is your first Flutter project:
+### Features
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+- download files
+- handle incomplete downloads
+- resume downloads
+- cancel
+- get current download status (percentage or size remaining)
+- merge all chunks into one file.
 
 For help getting started with Flutter development, view the
 [online documentation](https://docs.flutter.dev/), which offers tutorials,

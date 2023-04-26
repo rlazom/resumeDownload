@@ -46,6 +46,7 @@ class _MyHomePageState extends State<MyHomePage> {
   CancelToken cancelToken = CancelToken();
   final percentNotifier = ValueNotifier<double?>(null);
   final localNotifier = ValueNotifier<String?>(null);
+  List<int> sizes = [];
 
   @override
   void initState() {
@@ -68,6 +69,7 @@ class _MyHomePageState extends State<MyHomePage> {
     required String fileUrl,
     required String fileLocalRouteStr,
   }) async {
+    debugPrint('_checkOnLocal()...');
     localNotifier.value = '';
     File localFile = File(fileLocalRouteStr);
     String dir = path.dirname(fileLocalRouteStr);
@@ -75,7 +77,9 @@ class _MyHomePageState extends State<MyHomePage> {
     String extension = path.extension(fileLocalRouteStr);
 
     String localRouteToSaveFileStr = fileLocalRouteStr;
-    List<int> sizes = [];
+    // List<int> sizes = [];
+    sizes.clear();
+    int sumSizes = 0;
     int fileOriginSize = 0;
     bool fullFile = false;
 
@@ -105,7 +109,9 @@ class _MyHomePageState extends State<MyHomePage> {
         f = File(localRouteToSaveFileStr);
       }
 
-      int sumSizes = sizes.fold(0, (p, c) => p + c);
+      sumSizes = sizes.fold(0, (p, c) => p + c);
+
+      print('sumSizes: "$sumSizes", sizes: "$sizes"');
 
       localText +=
           '\n\nsize: ${filesize(sumSizes)}/${filesize(fileOriginSize)}';
@@ -114,9 +120,7 @@ class _MyHomePageState extends State<MyHomePage> {
       fullFile = sumSizes == fileOriginSize;
     }
     localNotifier.value = localText;
-    if(fullFile) {
-      percentNotifier.value = 1;
-    }
+    percentNotifier.value = fullFile ? 1 : sumSizes / fileOriginSize;
   }
 
   _cancel() {
@@ -127,6 +131,9 @@ class _MyHomePageState extends State<MyHomePage> {
 
   _onReceiveProgress(int received, int total) {
     if (!cancelToken.isCancelled) {
+      int sum = sizes.fold(0, (p, c) => p + c);
+      received += sum;
+
       percentNotifier.value = received / total;
       debugPrint(
           'percentNotifier: ${(percentNotifier.value! * 100).toStringAsFixed(2)}');
@@ -137,6 +144,7 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   _download() {
+    localNotifier.value = null;
     percentNotifier.value = 0;
     fileUrl = urlTextEditingCtrl.text;
     fileLocalRouteStr = getLocalCacheFilesRoute(fileUrl, dir!);
@@ -157,7 +165,7 @@ class _MyHomePageState extends State<MyHomePage> {
     String extension = path.extension(fileLocalRouteStr);
 
     String localRouteToSaveFileStr = fileLocalRouteStr;
-    List<int> sizes = [];
+    sizes.clear();
     int fileOriginSize = 0;
     Options? options;
 
@@ -186,35 +194,29 @@ class _MyHomePageState extends State<MyHomePage> {
         );
       } else {
         percentNotifier.value = 1;
-        _checkOnLocal(fileUrl: fileUrl, fileLocalRouteStr: fileLocalRouteStr);
-        debugPrint('percentNotifier [ALREADY DOWNLOADED]: ${(percentNotifier.value! * 100).toStringAsFixed(2)}');
-        if(sizes.length == 1) {
+
+        debugPrint(
+            'percentNotifier [ALREADY DOWNLOADED]: ${(percentNotifier.value! * 100).toStringAsFixed(2)}');
+        if (sizes.length == 1) {
           debugPrint('percentNotifier [ALREADY DOWNLOADED - ONE FILE]');
+          _checkOnLocal(fileUrl: fileUrl, fileLocalRouteStr: fileLocalRouteStr);
           return localFile;
         }
       }
     }
 
-    if((percentNotifier.value ?? 0) < 1) {
+    if ((percentNotifier.value ?? 0) < 1) {
       if (cancelToken.isCancelled) {
         cancelToken = CancelToken();
       }
 
       try {
-        await dio.download(
-          fileUrl,
-          localRouteToSaveFileStr,
-          options: options,
-          cancelToken: cancelToken,
-          deleteOnError: false,
-          onReceiveProgress: options == null
-              ? _onReceiveProgress
-              : (int received, int total) {
-            int sum = sizes.fold(0, (p, c) => p + c);
-            received += sum;
-            _onReceiveProgress(received, fileOriginSize);
-          },
-        );
+        await dio.download(fileUrl, localRouteToSaveFileStr,
+            options: options,
+            cancelToken: cancelToken,
+            deleteOnError: false,
+            onReceiveProgress: (int received, int total) =>
+                _onReceiveProgress(received, fileOriginSize));
       } catch (e) {
         debugPrint('..dio.download()...ERROR: "${e.toString()}"');
         return null;
@@ -346,6 +348,7 @@ class _MyHomePageState extends State<MyHomePage> {
                                           ElevatedButton(
                                             onPressed: () {
                                               localNotifier.value = null;
+                                              percentNotifier.value = null;
                                             },
                                             child: Row(
                                               children: const [
@@ -373,7 +376,7 @@ class _MyHomePageState extends State<MyHomePage> {
                   ? null
                   : percent == null
                       ? _download
-                      : _cancel,
+                      : localNotifier.value != null ? _download : _cancel,
               tooltip: percent == null ? 'Download' : 'Cancel',
               backgroundColor:
                   percent == 0 || percent == 1 ? Colors.grey : null,
@@ -383,7 +386,7 @@ class _MyHomePageState extends State<MyHomePage> {
                       ? Icons.download_done
                       : percent == null
                           ? Icons.download
-                          : Icons.close),
+                          : localNotifier.value != null ? Icons.download : Icons.close),
             );
           }),
     );
