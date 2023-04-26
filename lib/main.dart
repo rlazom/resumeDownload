@@ -77,6 +77,7 @@ class _MyHomePageState extends State<MyHomePage> {
     String localRouteToSaveFileStr = fileLocalRouteStr;
     List<int> sizes = [];
     int fileOriginSize = 0;
+    bool fullFile = false;
 
     Response response = await dio.head(fileUrl);
     fileOriginSize = int.parse(response.headers.value('content-length')!);
@@ -110,14 +111,18 @@ class _MyHomePageState extends State<MyHomePage> {
           '\n\nsize: ${filesize(sumSizes)}/${filesize(fileOriginSize)}';
       localText += '\nbytes: $sumSizes/$fileOriginSize';
       localText += '\n${(sumSizes / fileOriginSize * 100).toStringAsFixed(2)}%';
-      if (sumSizes < fileOriginSize) {}
+      fullFile = sumSizes == fileOriginSize;
     }
     localNotifier.value = localText;
+    if(fullFile) {
+      percentNotifier.value = 1;
+    }
   }
 
   _cancel() {
     cancelToken.cancel();
     percentNotifier.value = null;
+    _checkOnLocal(fileUrl: fileUrl, fileLocalRouteStr: fileLocalRouteStr);
   }
 
   _onReceiveProgress(int received, int total) {
@@ -144,6 +149,8 @@ class _MyHomePageState extends State<MyHomePage> {
     required String fileUrl,
     required String fileLocalRouteStr,
   }) async {
+    debugPrint('getItemFileWithProgress()...');
+
     File localFile = File(fileLocalRouteStr);
     String dir = path.dirname(fileLocalRouteStr);
     String basename = path.basenameWithoutExtension(fileLocalRouteStr);
@@ -177,34 +184,45 @@ class _MyHomePageState extends State<MyHomePage> {
         options = Options(
           headers: {'Range': 'bytes=$sumSizes-'},
         );
+      } else {
+        percentNotifier.value = 1;
+        _checkOnLocal(fileUrl: fileUrl, fileLocalRouteStr: fileLocalRouteStr);
+        debugPrint('percentNotifier [ALREADY DOWNLOADED]: ${(percentNotifier.value! * 100).toStringAsFixed(2)}');
+        if(sizes.length == 1) {
+          debugPrint('percentNotifier [ALREADY DOWNLOADED - ONE FILE]');
+          return localFile;
+        }
       }
     }
 
-    if (cancelToken.isCancelled) {
-      cancelToken = CancelToken();
-    }
+    if((percentNotifier.value ?? 0) < 1) {
+      if (cancelToken.isCancelled) {
+        cancelToken = CancelToken();
+      }
 
-    try {
-      await dio.download(
-        fileUrl,
-        localRouteToSaveFileStr,
-        options: options,
-        cancelToken: cancelToken,
-        deleteOnError: false,
-        onReceiveProgress: options == null
-            ? _onReceiveProgress
-            : (int received, int total) {
-                int sum = sizes.fold(0, (p, c) => p + c);
-                received += sum;
-                _onReceiveProgress(received, fileOriginSize);
-              },
-      );
-    } catch (e) {
-      debugPrint('..dio.download()...ERROR: "${e.toString()}"');
-      return null;
+      try {
+        await dio.download(
+          fileUrl,
+          localRouteToSaveFileStr,
+          options: options,
+          cancelToken: cancelToken,
+          deleteOnError: false,
+          onReceiveProgress: options == null
+              ? _onReceiveProgress
+              : (int received, int total) {
+            int sum = sizes.fold(0, (p, c) => p + c);
+            received += sum;
+            _onReceiveProgress(received, fileOriginSize);
+          },
+        );
+      } catch (e) {
+        debugPrint('..dio.download()...ERROR: "${e.toString()}"');
+        return null;
+      }
     }
 
     if (existsSync) {
+      debugPrint('[ALREADY DOWNLOADED - MERGING FILES]');
       var raf = await localFile.open(mode: FileMode.writeOnlyAppend);
 
       int i = 1;
@@ -221,6 +239,7 @@ class _MyHomePageState extends State<MyHomePage> {
       await raf.close();
     }
 
+    _checkOnLocal(fileUrl: fileUrl, fileLocalRouteStr: fileLocalRouteStr);
     return localFile;
   }
 
