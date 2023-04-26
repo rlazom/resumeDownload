@@ -14,7 +14,6 @@ void main() {
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
-  // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
@@ -77,7 +76,6 @@ class _MyHomePageState extends State<MyHomePage> {
     String extension = path.extension(fileLocalRouteStr);
 
     String localRouteToSaveFileStr = fileLocalRouteStr;
-    // List<int> sizes = [];
     sizes.clear();
     int sumSizes = 0;
     int fileOriginSize = 0;
@@ -116,8 +114,9 @@ class _MyHomePageState extends State<MyHomePage> {
       localText += '\n${(sumSizes / fileOriginSize * 100).toStringAsFixed(2)}%';
       fullFile = sumSizes == fileOriginSize;
     }
+    double percent = sumSizes / fileOriginSize;
     localNotifier.value = localText;
-    percentNotifier.value = fullFile ? 1 : sumSizes / fileOriginSize;
+    percentNotifier.value = fullFile ? 1 : percent == 0 ? null : percent;
   }
 
   _cancel() {
@@ -163,13 +162,14 @@ class _MyHomePageState extends State<MyHomePage> {
 
     String localRouteToSaveFileStr = fileLocalRouteStr;
     sizes.clear();
-    int fileOriginSize = 0;
+    Response response = await dio.head(fileUrl);
+    int fileOriginSize = int.parse(response.headers.value('content-length')!);
     Options? options;
 
     bool existsSync = localFile.existsSync();
     if (existsSync) {
-      Response response = await dio.head(fileUrl);
-      fileOriginSize = int.parse(response.headers.value('content-length')!);
+      // Response response = await dio.head(fileUrl);
+      // fileOriginSize = int.parse(response.headers.value('content-length')!);
 
       int fileLocalSize = localFile.lengthSync();
       sizes.add(fileLocalSize);
