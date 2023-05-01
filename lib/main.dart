@@ -38,12 +38,19 @@ class MyHomePage extends StatefulWidget {
 class _MyHomePageState extends State<MyHomePage> {
   String fileUrl =
       'https://flutter.github.io/assets-for-api-docs/assets/videos/butterfly.mp4';
+
+  final double maxAvailableMemory = 0.5; // Max limit of available memory
+  final availableCores = Platform.numberOfProcessors;
+
   String fileLocalRouteStr = '';
   Dio dio = Dio();
   Directory? dir;
   TextEditingController urlTextEditingCtrl = TextEditingController();
   CancelToken cancelToken = CancelToken();
-  final percentNotifier = ValueNotifier<double?>(null);
+
+  // final percentNotifier = ValueNotifier<double?>(null);
+  final percentNotifier = ValueNotifier<List<double>?>(null);
+  final multipartNotifier = ValueNotifier<bool>(false);
   final localNotifier = ValueNotifier<String?>(null);
   List<int> sizes = [];
 
@@ -51,6 +58,7 @@ class _MyHomePageState extends State<MyHomePage> {
   void initState() {
     super.initState();
     urlTextEditingCtrl.text = fileUrl;
+
     initializeLocalStorageRoute();
   }
 
@@ -116,7 +124,11 @@ class _MyHomePageState extends State<MyHomePage> {
     }
     double percent = sumSizes / fileOriginSize;
     localNotifier.value = localText;
-    percentNotifier.value = fullFile ? 1 : percent == 0 ? null : percent;
+    percentNotifier.value = fullFile
+        ? 1
+        : percent == 0
+            ? null
+            : percent;
   }
 
   _cancel() {
@@ -125,62 +137,125 @@ class _MyHomePageState extends State<MyHomePage> {
     _checkOnLocal(fileUrl: fileUrl, fileLocalRouteStr: fileLocalRouteStr);
   }
 
-  _onReceiveProgress(int received, int total) {
+  _onReceiveProgress(int received, int total, {index = 0}) {
     if (!cancelToken.isCancelled) {
       int sum = sizes.fold(0, (p, c) => p + c);
       received += sum;
 
-      percentNotifier.value = received / total;
+      percentNotifier.value![index] = received / total;
       debugPrint(
-          'percentNotifier: ${(percentNotifier.value! * 100).toStringAsFixed(2)}');
+          'percentNotifier: ${(percentNotifier.value![index] * 100).toStringAsFixed(2)}');
     } else {
       debugPrint(
-          'percentNotifier [AFTER CANCELED]: ${(percentNotifier.value! * 100).toStringAsFixed(2)}');
+          'percentNotifier [AFTER CANCELED]: ${(percentNotifier.value![index] * 100).toStringAsFixed(2)}');
     }
   }
 
-  _download() {
-    localNotifier.value = null;
-    percentNotifier.value = 0;
-    fileUrl = urlTextEditingCtrl.text;
-    fileLocalRouteStr = getLocalCacheFilesRoute(fileUrl, dir!);
+  Future<int> _getOriginFileSize(String url) async {
+    int fileOriginSize = 0;
 
-    getItemFileWithProgress(
-        fileUrl: fileUrl, fileLocalRouteStr: fileLocalRouteStr);
+    /// GET ORIGIN FILE SIZE - BEGIN
+    Response response = await dio.head(url);
+    fileOriginSize = int.parse(response.headers.value('content-length')!);
+
+    /// ANOTHER WAY WITH HTTP
+    // final httpClient = HttpClient();
+    // final request = await httpClient.getUrl(Uri.parse(url));
+    // final response2 = await request.close();
+    // fileOriginSize = response2.contentLength;
+    /// GET ORIGIN FILE SIZE - END
+
+    return fileOriginSize;
   }
 
-  Future<File?> getItemFileWithProgress({
+  Future<int> _getMaxMemoryUsage() async {
+    final sysInfo = await Process.run('sysctl', ['-n', 'hw.memsize']);
+    final memorySize = int.parse(sysInfo.stdout.toString().trim());
+    final maxMemoryUsage = (memorySize * maxAvailableMemory).round();
+    return maxMemoryUsage;
+  }
+
+  int _calculateOptimalMaxParallelDownloads(int fileSize, int maxMemoryUsage) {
+    final maxParallelDownloads = (fileSize / maxMemoryUsage).ceil();
+    return maxParallelDownloads > availableCores
+        ? availableCores
+        : maxParallelDownloads;
+  }
+
+  _download() async {
+    localNotifier.value = null;
+    percentNotifier.value = [0];
+    fileUrl = urlTextEditingCtrl.text;
+
+    fileLocalRouteStr = getLocalCacheFilesRoute(fileUrl, dir!);
+    final File file = File(fileLocalRouteStr);
+
+    final int fileOriginSize = await _getOriginFileSize(fileUrl);
+    final int maxMemoryUsage = await _getMaxMemoryUsage();
+
+    int optimalMaxParallelDownloads = 1;
+    int chunkSize = fileOriginSize;
+    if(multipartNotifier.value) {
+      optimalMaxParallelDownloads = _calculateOptimalMaxParallelDownloads(fileOriginSize, maxMemoryUsage);
+      chunkSize = (file.lengthSync() / optimalMaxParallelDownloads).ceil();
+    }
+
+    String tDir = path.dirname(fileLocalRouteStr);
+    String tBasename = path.basenameWithoutExtension(fileLocalRouteStr);
+
+    final tasks = <Future>[];
+    for(int i = 0; i < optimalMaxParallelDownloads; i++) {
+      final start = i * chunkSize;
+      var end = (i + 1) * chunkSize - 1;
+      if (end > file.lengthSync() - 1) {
+        end = file.lengthSync() - 1;
+      }
+
+      String fileName = '$tDir/$tBasename' '_$i';
+      final task = getChunkFileWithProgress(fileUrl: fileUrl, fileLocalRouteStr: fileName, fileOriginSize: fileOriginSize, start: start, end: end,);
+      tasks.add(task);
+    }
+    final results = await Future.wait(tasks);
+
+    /// WRITE BYTES
+    for (File result in results) {
+      file.writeAsBytesSync(result.readAsBytesSync(), mode: FileMode.writeOnlyAppend,);
+    }
+  }
+
+  Future<File?> getChunkFileWithProgress({
     required String fileUrl,
     required String fileLocalRouteStr,
+    required int fileOriginSize,
+    int? start,
+    int? end,
   }) async {
-    debugPrint('getItemFileWithProgress()...');
+    debugPrint('getChunkFileWithProgress()...');
 
     File localFile = File(fileLocalRouteStr);
     String dir = path.dirname(fileLocalRouteStr);
     String basename = path.basenameWithoutExtension(fileLocalRouteStr);
-    String extension = path.extension(fileLocalRouteStr);
+    // String extension = path.extension(fileLocalRouteStr);
 
     String localRouteToSaveFileStr = fileLocalRouteStr;
     sizes.clear();
-    Response response = await dio.head(fileUrl);
-    int fileOriginSize = int.parse(response.headers.value('content-length')!);
-    Options? options;
 
+    // int fileOriginSize = await _getOriginFileSize(fileUrl);
+    Options? options;
     bool existsSync = localFile.existsSync();
     if (existsSync) {
-      // Response response = await dio.head(fileUrl);
-      // fileOriginSize = int.parse(response.headers.value('content-length')!);
-
       int fileLocalSize = localFile.lengthSync();
       sizes.add(fileLocalSize);
 
       int i = 1;
-      localRouteToSaveFileStr = '$dir/$basename' '_$i$extension';
+      // localRouteToSaveFileStr = '$dir/$basename' '_$i$extension';
+      localRouteToSaveFileStr = '$dir/$basename' '_$i.part';
       File f = File(localRouteToSaveFileStr);
       while (f.existsSync()) {
         sizes.add(f.lengthSync());
         i++;
-        localRouteToSaveFileStr = '$dir/$basename' '_$i$extension';
+        // localRouteToSaveFileStr = '$dir/$basename' '_$i$extension';
+        localRouteToSaveFileStr = '$dir/$basename' '_$i.part';
         f = File(localRouteToSaveFileStr);
       }
 
@@ -225,14 +300,16 @@ class _MyHomePageState extends State<MyHomePage> {
       var raf = await localFile.open(mode: FileMode.writeOnlyAppend);
 
       int i = 1;
-      String filePartLocalRouteStr = '$dir/$basename' '_$i$extension';
+      // String filePartLocalRouteStr = '$dir/$basename' '_$i$extension';
+      String filePartLocalRouteStr = '$dir/$basename' '_$i.part';
       File f = File(filePartLocalRouteStr);
       while (f.existsSync()) {
         raf = await raf.writeFrom(await f.readAsBytes());
         await f.delete();
 
         i++;
-        filePartLocalRouteStr = '$dir/$basename' '_$i$extension';
+        // filePartLocalRouteStr = '$dir/$basename' '_$i$extension';
+        filePartLocalRouteStr = '$dir/$basename' '_$i.part';
         f = File(filePartLocalRouteStr);
       }
       await raf.close();
@@ -244,6 +321,10 @@ class _MyHomePageState extends State<MyHomePage> {
 
   @override
   Widget build(BuildContext context) {
+    const SizedBox spaceWdt = SizedBox(
+      height: 8.0,
+    );
+
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.title),
@@ -270,30 +351,49 @@ class _MyHomePageState extends State<MyHomePage> {
                 },
                 child: const Text('Check URL on Local Storage'),
               ),
-              const SizedBox(
-                height: 8.0,
+              spaceWdt,
+              Switch(
+                value: multipartNotifier.value,
+                activeColor: Colors.green,
+                onChanged: (bool value) {
+                  multipartNotifier.value = value;
+                },
               ),
-              ValueListenableBuilder<double?>(
-                  valueListenable: percentNotifier,
-                  builder: (context, percent, _) {
-                    return Stack(
-                      alignment: Alignment.center,
-                      children: [
-                        SizedBox(
-                          width: 60,
-                          height: 60,
-                          child: CircularProgressIndicator(
-                            value: percent == 0 ? null : percent ?? 100,
-                            color: percent != null ? null : Colors.grey,
-                          ),
-                        ),
-                        Text(((percent ?? 0) * 100).toStringAsFixed(2)),
-                      ],
-                    );
-                  }),
-              const SizedBox(
-                height: 8.0,
+              SwitchListTile(
+                tileColor: Colors.green,
+                title: const Text('Multipart Download'),
+                value: multipartNotifier.value,
+                onChanged:(bool? value) => multipartNotifier.value,
               ),
+              ValueListenableBuilder<bool>(
+                valueListenable: multipartNotifier,
+                builder: (context, isMultipart, _) {
+                  return ValueListenableBuilder<List<double>?>(
+                      valueListenable: percentNotifier,
+                      builder: (context, percentList, _) {
+                        if(isMultipart) {
+                          return Container();
+                        } else {
+                          final double? percent = percentList?.first;
+                          return Stack(
+                            alignment: Alignment.center,
+                            children: [
+                              SizedBox(
+                                width: 60,
+                                height: 60,
+                                child: CircularProgressIndicator(
+                                  value: percent == 0 ? null : percent ?? 100,
+                                  color: percent != null ? null : Colors.grey,
+                                ),
+                              ),
+                              Text(((percent ?? 0) * 100).toStringAsFixed(2)),
+                            ],
+                          );
+                        }
+                      });
+                }
+              ),
+              spaceWdt,
               ValueListenableBuilder<String?>(
                   valueListenable: localNotifier,
                   builder: (context, localData, _) {
@@ -337,9 +437,7 @@ class _MyHomePageState extends State<MyHomePage> {
                                                     ],
                                                   ),
                                                 ),
-                                                const SizedBox(
-                                                  width: 8.0,
-                                                ),
+                                                spaceWdt,
                                               ],
                                             ),
                                           ElevatedButton(
@@ -365,9 +463,11 @@ class _MyHomePageState extends State<MyHomePage> {
           ),
         ),
       ),
-      floatingActionButton: ValueListenableBuilder<double?>(
+      floatingActionButton: ValueListenableBuilder<List<double>?>(
           valueListenable: percentNotifier,
-          builder: (context, percent, _) {
+          builder: (context, percentList, _) {
+            final double? percent = percentList?.fold(0, (p, c) => p! + c);
+
             return FloatingActionButton(
               onPressed: percent == 0 || percent == 1
                   ? null
