@@ -21,5 +21,6 @@ String getLocalCacheFilesRoute(String url, Directory dir) {
 }
 
 getCacheDirectory() async {
-  return await getTemporaryDirectory();
+  // return await getTemporaryDirectory();
+  return await getExternalStorageDirectory();
 }

@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:filesize/filesize.dart';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as path;
+import 'package:system_info2/system_info2.dart';
 
 import 'general_functions.dart';
 
@@ -39,20 +40,24 @@ class _MyHomePageState extends State<MyHomePage> {
   String fileUrl =
       'https://flutter.github.io/assets-for-api-docs/assets/videos/butterfly.mp4';
 
-  final double maxAvailableMemory = 0.5; // Max limit of available memory
+  // final double maxAvailableMemory = 0.5; // Max limit of available memory
+  final double maxAvailableMemory = 0.80; // Max limit of available memory
   final availableCores = Platform.numberOfProcessors;
 
+  int? minSpeed;
+  int? maxSpeed;
+  List<int> aveSpeedList = [];
   String fileLocalRouteStr = '';
   Dio dio = Dio();
   Directory? dir;
   TextEditingController urlTextEditingCtrl = TextEditingController();
-  CancelToken cancelToken = CancelToken();
 
-  // final percentNotifier = ValueNotifier<double?>(null);
+  List<CancelToken> cancelTokenList = [];
+  List<DateTime> percentUpdate = [];
+
   final percentNotifier = ValueNotifier<List<double>?>(null);
   final multipartNotifier = ValueNotifier<bool>(false);
   final localNotifier = ValueNotifier<String?>(null);
-  List<int> sizes = [];
 
   @override
   void initState() {
@@ -64,6 +69,7 @@ class _MyHomePageState extends State<MyHomePage> {
 
   initializeLocalStorageRoute() async {
     dir = await getCacheDirectory();
+    debugPrint('initState() - dir: "${dir?.path}"');
   }
 
   _deleteLocal() {
@@ -75,79 +81,114 @@ class _MyHomePageState extends State<MyHomePage> {
   _checkOnLocal({
     required String fileUrl,
     required String fileLocalRouteStr,
-  }) async {
-    debugPrint('_checkOnLocal()...');
-    localNotifier.value = '';
-    File localFile = File(fileLocalRouteStr);
-    String dir = path.dirname(fileLocalRouteStr);
-    String basename = path.basenameWithoutExtension(fileLocalRouteStr);
-    String extension = path.extension(fileLocalRouteStr);
+  }) async {}
 
-    String localRouteToSaveFileStr = fileLocalRouteStr;
-    sizes.clear();
-    int sumSizes = 0;
-    int fileOriginSize = 0;
-    bool fullFile = false;
-
-    Response response = await dio.head(fileUrl);
-    fileOriginSize = int.parse(response.headers.value('content-length')!);
-    String localText = 'fileOriginSize: ${filesize(fileOriginSize)}\n\n';
-
-    bool existsSync = localFile.existsSync();
-    if (!existsSync) {
-      localText += 'File "$basename$extension" does not exist \nin: "$dir"';
-    } else {
-      int fileLocalSize = localFile.lengthSync();
-      sizes.add(fileLocalSize);
-      localText +=
-          'localFile: "$basename$extension", fileLocalSize: ${filesize(fileLocalSize)}';
-
-      int i = 1;
-      localRouteToSaveFileStr = '$dir/$basename' '_$i$extension';
-      File f = File(localRouteToSaveFileStr);
-      while (f.existsSync()) {
-        int tSize = f.lengthSync();
-        sizes.add(tSize);
-        localText += '\nchunk: "$basename'
-            '_$i$extension", fileLocalSize: ${filesize(tSize)}';
-        i++;
-        localRouteToSaveFileStr = '$dir/$basename' '_$i$extension';
-        f = File(localRouteToSaveFileStr);
-      }
-
-      sumSizes = sizes.fold(0, (p, c) => p + c);
-      localText +=
-          '\n\nsize: ${filesize(sumSizes)}/${filesize(fileOriginSize)}';
-      localText += '\nbytes: $sumSizes/$fileOriginSize';
-      localText += '\n${(sumSizes / fileOriginSize * 100).toStringAsFixed(2)}%';
-      fullFile = sumSizes == fileOriginSize;
-    }
-    double percent = sumSizes / fileOriginSize;
-    localNotifier.value = localText;
-    percentNotifier.value = fullFile
-        ? 1
-        : percent == 0
-            ? null
-            : percent;
-  }
+  // }) async {
+  //   debugPrint('_checkOnLocal()...');
+  //   localNotifier.value = '';
+  //   File localFile = File(fileLocalRouteStr);
+  //   String dir = path.dirname(fileLocalRouteStr);
+  //   String basename = path.basenameWithoutExtension(fileLocalRouteStr);
+  //   String extension = path.extension(fileLocalRouteStr);
+  //
+  //   String localRouteToSaveFileStr = fileLocalRouteStr;
+  //   sizes.clear();
+  //   int sumSizes = 0;
+  //   int fileOriginSize = 0;
+  //   bool fullFile = false;
+  //
+  //   Response response = await dio.head(fileUrl);
+  //   fileOriginSize = int.parse(response.headers.value('content-length')!);
+  //   String localText = 'fileOriginSize: ${filesize(fileOriginSize)}\n\n';
+  //
+  //   bool existsSync = localFile.existsSync();
+  //   if (!existsSync) {
+  //     localText += 'File "$basename$extension" does not exist \nin: "$dir"';
+  //   } else {
+  //     int fileLocalSize = localFile.lengthSync();
+  //     sizes.add(fileLocalSize);
+  //     localText +=
+  //         'localFile: "$basename$extension", fileLocalSize: ${filesize(fileLocalSize)}';
+  //
+  //     int i = 1;
+  //     localRouteToSaveFileStr = '$dir/$basename' '_$i$extension';
+  //     File f = File(localRouteToSaveFileStr);
+  //     while (f.existsSync()) {
+  //       int tSize = f.lengthSync();
+  //       sizes.add(tSize);
+  //       localText += '\nchunk: "$basename'
+  //           '_$i$extension", fileLocalSize: ${filesize(tSize)}';
+  //       i++;
+  //       localRouteToSaveFileStr = '$dir/$basename' '_$i$extension';
+  //       f = File(localRouteToSaveFileStr);
+  //     }
+  //
+  //     sumSizes = sizes.fold(0, (p, c) => p + c);
+  //     localText +=
+  //         '\n\nsize: ${filesize(sumSizes)}/${filesize(fileOriginSize)}';
+  //     localText += '\nbytes: $sumSizes/$fileOriginSize';
+  //     localText += '\n${(sumSizes / fileOriginSize * 100).toStringAsFixed(2)}%';
+  //     fullFile = sumSizes == fileOriginSize;
+  //   }
+  //   double percent = sumSizes / fileOriginSize;
+  //   localNotifier.value = localText;
+  //   percentNotifier.value = fullFile
+  //       ? 1
+  //       : percent == 0
+  //           ? null
+  //           : percent;
+  // }
 
   _cancel() {
-    cancelToken.cancel();
+    for (CancelToken cancelToken in cancelTokenList) {
+      cancelToken.cancel();
+    }
+
     percentNotifier.value = null;
     _checkOnLocal(fileUrl: fileUrl, fileLocalRouteStr: fileLocalRouteStr);
   }
 
-  _onReceiveProgress(int received, int total, {index = 0}) {
+  _onReceiveProgress(int received, int total, index, sizes) {
+    var cancelToken = cancelTokenList.elementAt(index);
     if (!cancelToken.isCancelled) {
       int sum = sizes.fold(0, (p, c) => p + c);
       received += sum;
 
-      percentNotifier.value![index] = received / total;
-      debugPrint(
-          'percentNotifier: ${(percentNotifier.value![index] * 100).toStringAsFixed(2)}');
+      var valueOld = total * percentNotifier.value![index];
+      DateTime timeOld = percentUpdate[index];
+
+      var valueNew = received / total;
+      percentNotifier.value![index] = valueNew;
+      DateTime timeNew = DateTime.now();
+
+      final timeDifference = timeNew.difference(timeOld).inMilliseconds / 1000;
+      final downloadedSize = received - valueOld;
+
+      percentUpdate[index] = timeNew;
+      percentNotifier.notifyListeners();
+
+      if(timeDifference == 0) {
+        return;
+      }
+
+      String percent = (valueNew * 100).toStringAsFixed(2);
+      double speedBytes = downloadedSize / timeDifference;
+      int speed = speedBytes.ceil();
+      // String speedStr = speed.toStringAsFixed(2);
+
+      aveSpeedList.add(speed);
+      if(minSpeed == null || (minSpeed ?? 99999) > speed) {
+        minSpeed = speed;
+      }
+      if(maxSpeed == null || (maxSpeed ?? -1) < speed) {
+        maxSpeed = speed;
+      }
+
+      debugPrint('_onReceiveProgress(index: "$index")...'
+          'percent: "$percent", '
+          'speed: "${filesize(speed)} / second"');
     } else {
-      debugPrint(
-          'percentNotifier [AFTER CANCELED]: ${(percentNotifier.value![index] * 100).toStringAsFixed(2)}');
+      debugPrint('_onReceiveProgress(index: "$index")...percentNotifier [AFTER CANCELED]: ${(percentNotifier.value![index] * 100).toStringAsFixed(2)}');
     }
   }
 
@@ -169,106 +210,220 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   Future<int> _getMaxMemoryUsage() async {
-    final sysInfo = await Process.run('sysctl', ['-n', 'hw.memsize']);
-    final memorySize = int.parse(sysInfo.stdout.toString().trim());
-    final maxMemoryUsage = (memorySize * maxAvailableMemory).round();
+    // debugPrint('_getMaxMemoryUsage()...');
+
+    // final totalPhysicalMemory = SysInfo.getTotalPhysicalMemory();
+    final freePhysicalMemory = SysInfo.getFreePhysicalMemory();
+
+    // debugPrint('_getMaxMemoryUsage() - totalPhysicalMemory: "$totalPhysicalMemory" - ${filesize(totalPhysicalMemory)}');
+    // debugPrint('_getMaxMemoryUsage() - freePhysicalMemory: "$freePhysicalMemory" - ${filesize(freePhysicalMemory)}');
+
+    final maxMemoryUsage = (freePhysicalMemory * maxAvailableMemory).round();
     return maxMemoryUsage;
   }
 
   int _calculateOptimalMaxParallelDownloads(int fileSize, int maxMemoryUsage) {
-    final maxParallelDownloads = (fileSize / maxMemoryUsage).ceil();
-    return maxParallelDownloads > availableCores
+    // debugPrint('_calculateOptimalMaxParallelDownloads()...');
+
+    // final maxParallelDownloads = (fileSize / maxMemoryUsage).ceil();
+    // final maxParallelDownloads = (maxMemoryUsage / fileSize).ceil();
+
+    // final maxParallelDownloads = (fileSize / maxMemoryUsage).ceil();
+
+    final maxPartSize = (maxMemoryUsage / availableCores).floor();
+    final maxParallelDownloads = (fileSize / maxPartSize).ceil();
+
+    final result = maxParallelDownloads > availableCores
         ? availableCores
-        : maxParallelDownloads;
+        : ((maxParallelDownloads + availableCores) / 2).ceil();
+        // : ((maxParallelDownloads + availableCores) / 2).floor();
+
+    debugPrint('..maxParallelDownloads: $maxParallelDownloads');
+    debugPrint('..availableCores: $availableCores');
+    debugPrint('..result: $result');
+
+    return result;
   }
 
   _download() async {
+    DateTime before = DateTime.now();
+    debugPrint('_download()...');
     localNotifier.value = null;
-    percentNotifier.value = [0];
+    percentNotifier.value = [];
+    percentUpdate = [];
+    cancelTokenList.clear();
+    minSpeed = null;
+    maxSpeed = null;
+    aveSpeedList.clear();
     fileUrl = urlTextEditingCtrl.text;
 
     fileLocalRouteStr = getLocalCacheFilesRoute(fileUrl, dir!);
     final File file = File(fileLocalRouteStr);
 
+    final bool fileLocalExists = file.existsSync();
+    final int fileLocalSize = fileLocalExists ? file.lengthSync() : 0;
     final int fileOriginSize = await _getOriginFileSize(fileUrl);
     final int maxMemoryUsage = await _getMaxMemoryUsage();
 
     int optimalMaxParallelDownloads = 1;
     int chunkSize = fileOriginSize;
-    if(multipartNotifier.value) {
+    if (multipartNotifier.value) {
       optimalMaxParallelDownloads = _calculateOptimalMaxParallelDownloads(fileOriginSize, maxMemoryUsage);
-      chunkSize = (file.lengthSync() / optimalMaxParallelDownloads).ceil();
+      chunkSize = (chunkSize / optimalMaxParallelDownloads).ceil();
     }
+    debugPrint('_download() - fileLocalExists: "$fileLocalExists"');
+    debugPrint('_download() - fileLocalSize: "$fileLocalSize" - ${filesize(fileLocalSize)}');
+    debugPrint('_download() - fileOriginSize: "$fileOriginSize" - ${filesize(fileOriginSize)}');
+    debugPrint('_download() - multipart: "${multipartNotifier.value}"');
+    debugPrint('_download() - maxMemoryUsage: "$maxMemoryUsage" - ${filesize(maxMemoryUsage)}');
+    debugPrint('_download() - optimalMaxParallelDownloads: "$optimalMaxParallelDownloads"');
+    debugPrint('_download() - chunkSize: "$chunkSize" - ${filesize(chunkSize)}');
 
-    String tDir = path.dirname(fileLocalRouteStr);
-    String tBasename = path.basenameWithoutExtension(fileLocalRouteStr);
+    if (fileLocalSize < fileOriginSize) {
+      String tDir = path.dirname(fileLocalRouteStr);
+      String tBasename = path.basenameWithoutExtension(fileLocalRouteStr);
 
-    final tasks = <Future>[];
-    for(int i = 0; i < optimalMaxParallelDownloads; i++) {
-      final start = i * chunkSize;
-      var end = (i + 1) * chunkSize - 1;
-      if (end > file.lengthSync() - 1) {
-        end = file.lengthSync() - 1;
+      final tasks = <Future>[];
+      List<double> tempNotifier = [];
+      for (int i = 0; i < optimalMaxParallelDownloads; i++) {
+        tempNotifier.add(0);
+        percentNotifier.value = List.from(tempNotifier);
+        cancelTokenList.add(CancelToken());
+        percentUpdate.add(DateTime.now());
+        final start = i * chunkSize;
+        var end = (i + 1) * chunkSize - 1;
+        if (fileLocalExists && end > fileLocalSize - 1) {
+          end = fileLocalSize - 1;
+        }
+
+        String fileName = '$tDir/$tBasename' '_$i';
+        debugPrint('_download() - fileName: "$fileName", fileOriginChunkSize: "${end - start}", start: "$start", end: "$end", index: "$i"');
+        final task = getChunkFileWithProgress(fileUrl: fileUrl, fileLocalRouteStr: fileName, fileOriginChunkSize: end - start, start: start, end: end, index: i);
+        tasks.add(task);
       }
 
-      String fileName = '$tDir/$tBasename' '_$i';
-      final task = getChunkFileWithProgress(fileUrl: fileUrl, fileLocalRouteStr: fileName, fileOriginSize: fileOriginSize, start: start, end: end,);
-      tasks.add(task);
-    }
-    final results = await Future.wait(tasks);
+      List? results;
+      try {
+        debugPrint('_download() - TRY await Future.wait(tasks)...');
+        results = await Future.wait(tasks);
+      } catch (e) {
+        debugPrint(
+            '_download() - TRY await Future.wait(tasks) - ERROR: "${e.toString()}"');
+        return;
+      }
 
-    /// WRITE BYTES
-    for (File result in results) {
-      file.writeAsBytesSync(result.readAsBytesSync(), mode: FileMode.writeOnlyAppend,);
+      /// WRITE BYTES
+      if (results.isNotEmpty) {
+        debugPrint('_download() - MERGING...');
+        for (File result in results) {
+          file.writeAsBytesSync(
+            result.readAsBytesSync(),
+            mode: FileMode.writeOnlyAppend,
+          );
+          result.delete();
+        }
+      }
+    } else {
+      percentNotifier.value = List.from([1.0]);
+
+      debugPrint('_download() - [ALREADY DOWNLOADED]');
+      // if (sizes.length == 1) {
+      //   debugPrint('percentNotifier [ALREADY DOWNLOADED - ONE FILE]');
+      _checkOnLocal(fileUrl: fileUrl, fileLocalRouteStr: fileLocalRouteStr);
+      // return localFile;
+      // }
+    }
+
+    if (File(fileLocalRouteStr).existsSync()) {
+      debugPrint('_download() - DONE - fileLocalRouteStr: "$fileLocalRouteStr"');
+    } else {
+      debugPrint('_download() - DONE - NO FILE');
+    }
+    DateTime after = DateTime.now();
+    Duration diff = after.difference(before);
+    debugPrint('_download()... DURATION: [${diff.inMilliseconds} milliseconds | ${diff.inSeconds} seconds]');
+
+    int aveSpeed = aveSpeedList.fold(0, (p, c) => p + c);
+    if(aveSpeedList.isNotEmpty) {
+      aveSpeed = (aveSpeed / aveSpeedList.length).ceil();
+      debugPrint('_download()... SPEED: '
+          'min: "${filesize(minSpeed)} / second", '
+          'max: "${filesize(maxSpeed)} / second", '
+          'ave: "${filesize(aveSpeed)} / second"');
     }
   }
 
   Future<File?> getChunkFileWithProgress({
     required String fileUrl,
     required String fileLocalRouteStr,
-    required int fileOriginSize,
-    int? start,
+    required int fileOriginChunkSize,
+    int start = 0,
     int? end,
+    int index = 0,
   }) async {
-    debugPrint('getChunkFileWithProgress()...');
+    // debugPrint('getChunkFileWithProgress(index: "$index")...');
 
     File localFile = File(fileLocalRouteStr);
     String dir = path.dirname(fileLocalRouteStr);
     String basename = path.basenameWithoutExtension(fileLocalRouteStr);
     // String extension = path.extension(fileLocalRouteStr);
 
+    debugPrint(
+        'getChunkFileWithProgress(index: "$index") - basename: "$basename"...');
     String localRouteToSaveFileStr = fileLocalRouteStr;
-    sizes.clear();
+    List<int> sizes = [];
 
     // int fileOriginSize = await _getOriginFileSize(fileUrl);
-    Options? options;
+    // Options? options;
+    Options options = Options(
+      headers: {'Range': 'bytes=$start-$end'},
+    );
+
     bool existsSync = localFile.existsSync();
+    // int chunkSize = ;
+
+    debugPrint(
+        'getChunkFileWithProgress(index: "$index") - existsChunk: "$existsSync');
     if (existsSync) {
       int fileLocalSize = localFile.lengthSync();
+      debugPrint(
+          'getChunkFileWithProgress(index: "$index") - existsChunk: "$basename'
+          '_0.part", fileLocalSize: "$fileLocalSize" - ${filesize(fileLocalSize)}');
       sizes.add(fileLocalSize);
 
       int i = 1;
-      // localRouteToSaveFileStr = '$dir/$basename' '_$i$extension';
       localRouteToSaveFileStr = '$dir/$basename' '_$i.part';
       File f = File(localRouteToSaveFileStr);
       while (f.existsSync()) {
-        sizes.add(f.lengthSync());
+        int chunkSize = f.lengthSync();
+        debugPrint(
+            'getChunkFileWithProgress(index: "$index") - existsChunk: "$basename'
+            '_$i.part", chunkSize: "$chunkSize" - ${filesize(chunkSize)}');
+        sizes.add(chunkSize);
         i++;
-        // localRouteToSaveFileStr = '$dir/$basename' '_$i$extension';
         localRouteToSaveFileStr = '$dir/$basename' '_$i.part';
         f = File(localRouteToSaveFileStr);
       }
 
+      debugPrint(
+          'getChunkFileWithProgress(index: "$index") - CREATING Chunk: "$basename'
+          '_$i.part"');
       int sumSizes = sizes.fold(0, (p, c) => p + c);
-      if (sumSizes < fileOriginSize) {
+      if (sumSizes < fileOriginChunkSize) {
+        int starBytes = start + sumSizes;
+        debugPrint(
+            'getChunkFileWithProgress(index: "$index") - FETCH Options: sumSizes: "$sumSizes", start: "$start", end: "$end"');
+        debugPrint(
+            'getChunkFileWithProgress(index: "$index") - FETCH Options: "bytes=$starBytes-$end"');
         options = Options(
-          headers: {'Range': 'bytes=$sumSizes-'},
+          // headers: {'Range': 'bytes=$sumSizes-'},
+          headers: {'Range': 'bytes=${start + sumSizes}-$end'},
         );
       } else {
-        percentNotifier.value = 1;
+        percentNotifier.value![index] = 1;
 
         debugPrint(
-            'percentNotifier [ALREADY DOWNLOADED]: ${(percentNotifier.value! * 100).toStringAsFixed(2)}');
+            'percentNotifier [ALREADY DOWNLOADED]: ${(percentNotifier.value![index] * 100).toStringAsFixed(2)}');
         if (sizes.length == 1) {
           debugPrint('percentNotifier [ALREADY DOWNLOADED - ONE FILE]');
           _checkOnLocal(fileUrl: fileUrl, fileLocalRouteStr: fileLocalRouteStr);
@@ -277,26 +432,32 @@ class _MyHomePageState extends State<MyHomePage> {
       }
     }
 
-    if ((percentNotifier.value ?? 0) < 1) {
+    if ((percentNotifier.value?[index] ?? 0) < 1) {
+      CancelToken cancelToken = cancelTokenList.elementAt(index);
       if (cancelToken.isCancelled) {
         cancelToken = CancelToken();
       }
 
       try {
+        debugPrint(
+            'getChunkFileWithProgress(index: "$index") - TRY dio.download()...');
         await dio.download(fileUrl, localRouteToSaveFileStr,
             options: options,
             cancelToken: cancelToken,
             deleteOnError: false,
-            onReceiveProgress: (int received, int total) =>
-                _onReceiveProgress(received, fileOriginSize));
+            onReceiveProgress: (int received, int total) => _onReceiveProgress(
+                received, fileOriginChunkSize, index, sizes));
       } catch (e) {
-        debugPrint('..dio.download()...ERROR: "${e.toString()}"');
-        return null;
+        debugPrint(
+            'getChunkFileWithProgress(index: "$index") - TRY dio.download() - ERROR: "${e.toString()}"');
+        // return null;
+        rethrow;
       }
     }
 
     if (existsSync) {
-      debugPrint('[ALREADY DOWNLOADED - MERGING FILES]');
+      debugPrint(
+          'getChunkFileWithProgress(index: "$index") - [CHUNKS DOWNLOADED - MERGING FILES]');
       var raf = await localFile.open(mode: FileMode.writeOnlyAppend);
 
       int i = 1;
@@ -316,6 +477,7 @@ class _MyHomePageState extends State<MyHomePage> {
     }
 
     _checkOnLocal(fileUrl: fileUrl, fileLocalRouteStr: fileLocalRouteStr);
+    debugPrint('getChunkFileWithProgress(index: "$index") - RETURN FILE: "$basename"');
     return localFile;
   }
 
@@ -352,47 +514,91 @@ class _MyHomePageState extends State<MyHomePage> {
                 child: const Text('Check URL on Local Storage'),
               ),
               spaceWdt,
-              Switch(
-                value: multipartNotifier.value,
-                activeColor: Colors.green,
-                onChanged: (bool value) {
-                  multipartNotifier.value = value;
-                },
-              ),
-              SwitchListTile(
-                tileColor: Colors.green,
-                title: const Text('Multipart Download'),
-                value: multipartNotifier.value,
-                onChanged:(bool? value) => multipartNotifier.value,
-              ),
               ValueListenableBuilder<bool>(
-                valueListenable: multipartNotifier,
-                builder: (context, isMultipart, _) {
-                  return ValueListenableBuilder<List<double>?>(
-                      valueListenable: percentNotifier,
-                      builder: (context, percentList, _) {
-                        if(isMultipart) {
-                          return Container();
-                        } else {
-                          final double? percent = percentList?.first;
-                          return Stack(
-                            alignment: Alignment.center,
-                            children: [
-                              SizedBox(
-                                width: 60,
-                                height: 60,
-                                child: CircularProgressIndicator(
-                                  value: percent == 0 ? null : percent ?? 100,
-                                  color: percent != null ? null : Colors.grey,
-                                ),
+                  valueListenable: multipartNotifier,
+                  builder: (context, isMultipart, _) {
+                    return Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Text('Multipart Download'),
+                        Switch(
+                          value: isMultipart,
+                          activeColor: Colors.green,
+                          onChanged: (bool value) {
+                            multipartNotifier.value = value;
+                          },
+                        ),
+                      ],
+                    );
+                  }),
+              spaceWdt,
+              ValueListenableBuilder<bool>(
+                  valueListenable: multipartNotifier,
+                  builder: (context, isMultipart, _) {
+                    return ValueListenableBuilder<List<double>?>(
+                        valueListenable: percentNotifier,
+                        builder: (context, percentList, _) {
+                          double? totalPercent =
+                              percentList?.fold(0, (p, c) => p! + c);
+                          totalPercent = totalPercent ?? 0;
+                          totalPercent =
+                              totalPercent > 1.0 ? 1.0 : totalPercent;
+
+                          if (isMultipart) {
+                            return Padding(
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 32.0),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text('$totalPercent'),
+                                  spaceWdt,
+                                  Row(
+                                    children: percentList
+                                            ?.map(
+                                              (e) => Expanded(
+                                                child: Column(
+                                                  children: [
+                                                    LinearProgressIndicator(value: e),
+                                                    Text(e.toStringAsFixed(2)),
+                                                  ],
+                                                ),
+                                              ),
+                                            )
+                                            .toList() ??
+                                        [
+                                          const Expanded(
+                                            child: LinearProgressIndicator(
+                                              value: 1,
+                                              color: Colors.grey,
+                                            ),
+                                          ),
+                                        ],
+                                  ),
+                                ],
                               ),
-                              Text(((percent ?? 0) * 100).toStringAsFixed(2)),
-                            ],
-                          );
-                        }
-                      });
-                }
-              ),
+                            );
+                          } else {
+                            final double? percent = percentList?.isEmpty == true
+                                ? null
+                                : percentList?.first;
+                            return Stack(
+                              alignment: Alignment.center,
+                              children: [
+                                SizedBox(
+                                  width: 60,
+                                  height: 60,
+                                  child: CircularProgressIndicator(
+                                    value: percent == 0 ? null : percent ?? 100,
+                                    color: percent != null ? null : Colors.grey,
+                                  ),
+                                ),
+                                Text(((percent ?? 0) * 100).toStringAsFixed(2)),
+                              ],
+                            );
+                          }
+                        });
+                  }),
               spaceWdt,
               ValueListenableBuilder<String?>(
                   valueListenable: localNotifier,
@@ -466,7 +672,9 @@ class _MyHomePageState extends State<MyHomePage> {
       floatingActionButton: ValueListenableBuilder<List<double>?>(
           valueListenable: percentNotifier,
           builder: (context, percentList, _) {
-            final double? percent = percentList?.fold(0, (p, c) => p! + c);
+            double? percent = percentList?.fold(0, (p, c) => p! + c);
+            percent = percent == null ? null : percent / (percentList?.length ?? 1);
+            percent = (percent ?? 0) > 1.0 ? 1.0 : percent;
 
             return FloatingActionButton(
               onPressed: percent == 0 || percent == 1
