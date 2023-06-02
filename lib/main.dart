@@ -1,12 +1,15 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:device_info_plus/device_info_plus.dart';
 import 'package:dio/dio.dart';
 import 'package:filesize/filesize.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'dart:io' as io;
+// import 'dart:io' as io;
 import 'package:path/path.dart' as path;
-import 'package:system_info2/system_info2.dart';
+import 'package:system_info2/system_info2.dart' as system_info;
+import 'package:device_info_plus/device_info_plus.dart' as device_info;
 
 import 'general_functions.dart';
 
@@ -42,10 +45,13 @@ class _MyHomePageState extends State<MyHomePage> {
   String fileUrl =
       'https://flutter.github.io/assets-for-api-docs/assets/videos/butterfly.mp4';
   static const noFilesStr = 'No Files';
+  static const originStr = 'Origin';
 
+  device_info.DeviceInfoPlugin deviceInfo = device_info.DeviceInfoPlugin();
   // final double maxAvailableMemory = 0.5; // Max limit of available memory
   final double maxAvailableMemory = 0.80; // Max limit of available memory
-  final availableCores = Platform.numberOfProcessors;
+  // final availableCores = Platform.numberOfProcessors;
+  int availableCores = 1;
 
   DateTime? before;
   int? minSpeed;
@@ -73,12 +79,50 @@ class _MyHomePageState extends State<MyHomePage> {
     super.initState();
     urlTextEditingCtrl.text = fileUrl;
 
+    try {
+      print('TRY initState.getAvailableCores()');
+      getAvailableCores().then((value) {
+        availableCores = value;
+        print('availableCores: "$availableCores"');
+      });
+    } catch(e) {
+      print('initState.getAvailableCores() CATCH E: "$e"');
+    }
     initializeLocalStorageRoute();
   }
 
   initializeLocalStorageRoute() async {
+    debugPrint('initState() - dir: "${dir?.path}"');
     dir = await getCacheDirectory();
     debugPrint('initState() - dir: "${dir?.path}"');
+  }
+
+  _checkOnOrigin({
+    required String fileUrl,
+  }) async {
+    debugPrint('_checkOnOrigin()...');
+    localNotifier.value = '';
+
+    debugPrint('_checkOnOrigin() - _getOriginFileSize()...');
+    int? fileOriginSize = await _getOriginFileSize(fileUrl);
+    debugPrint('_checkOnOrigin() - _getOriginFileSize()...DONE');
+    debugPrint('_checkOnOrigin() - fileOriginSize:"${filesize(fileOriginSize)}"');
+
+    debugPrint('_checkOnOrigin() - _getOriginFileChecksum()...');
+    String fileOriginChecksum = await _getOriginFileChecksum(fileUrl);
+    debugPrint('_checkOnOrigin() - _getOriginFileChecksum()...DONE');
+    debugPrint('_checkOnOrigin() - fileOriginChecksum:"$fileOriginChecksum"');
+
+    String localText = '$originStr Size: ${filesize(fileOriginSize ?? 0)}\n';
+
+    if(fileOriginSize == null) {
+      localText = '$originStr Size: -\n';
+      localNotifier.value = localText;
+      return;
+    }
+
+    localText += '$originStr Checksum: "$fileOriginChecksum"\n';
+    localNotifier.value = localText;
   }
 
   _checkOnLocal({
@@ -93,8 +137,15 @@ class _MyHomePageState extends State<MyHomePage> {
 
     debugPrint('_checkOnLocal() - _getOriginFileSize()...');
     int? fileOriginSize = await _getOriginFileSize(fileUrl);
-    String localText = 'fileOriginSize: ${filesize(fileOriginSize)}\n';
+    debugPrint('_checkOnLocal() - _getOriginFileSize()...DONE');
     debugPrint('_checkOnLocal() - fileOriginSize:"${filesize(fileOriginSize)}"');
+
+    debugPrint('_checkOnLocal() - _getOriginFileChecksum()...');
+    String remoteChecksum = await _getOriginFileChecksum(fileUrl);
+    debugPrint('_checkOnLocal() - _getOriginFileChecksum()...DONE');
+    debugPrint('_checkOnLocal() - fileOriginChecksum:"$remoteChecksum"');
+
+    String localText = 'fileOriginSize: ${filesize(fileOriginSize?? 0)}\n';
 
     if(fileOriginSize == null) {
       localText = 'fileOriginSize: -\n';
@@ -111,10 +162,15 @@ class _MyHomePageState extends State<MyHomePage> {
         followLinks: false,
       );
 
+      bool fullFile = files.length == 1;
+      String fileBasename = path.basename(fileLocalRouteStr);
+      String fileBasenameNoExt = path.basenameWithoutExtension(fileLocalRouteStr);
+
       if (files.isEmpty) {
         localText += '\n$noFilesStr\n';
       } else {
         files.sort((a, b) => a.path.compareTo(b.path));
+        int chunkSize = File(fileLocalRouteStr).lengthSync();
         for (FileSystemEntity file in files) {
           if (file is File) {
             String filepath = file.path;
@@ -123,10 +179,36 @@ class _MyHomePageState extends State<MyHomePage> {
 
             String basename = path.basename(filepath);
             if(basename.startsWith('_')) {
+              basename = basename.replaceAll('_$fileBasenameNoExt', '').replaceAll('_', '');
               String value = file.readAsStringSync();
-              localText += '\nFile: "$basename", Value: $value';
+              localText += '\n$basename: $value';
+              if(basename == 'chunkSize') {
+                chunkSize = int.parse(value);
+                localText += ' | ${filesize(value)}';
+              }
             } else {
-              localText += '\nFile: "$basename", Size: ${filesize(tSize)}';
+              double percent = tSize*100/chunkSize;
+              String percentStr = percent.toStringAsFixed(2);
+              localText += '\nFile: "$basename", Size: ${filesize(tSize)} - $percentStr%';
+            }
+
+            fullFile = fullFile && fileOriginSize == tSize && fileBasename == basename;
+            if(fullFile) {
+              String localChecksumMd5 = await isolatedChecksumGeneration(file)..hashCode.toString();
+              String localChecksumSha1 = await isolatedChecksumGeneration(file, crypt: 'sha1');
+              // String localChecksumSha256 = await isolatedChecksumGeneration(file, crypt: 'sha256');
+              // String localChecksumSha512 = await isolatedChecksumGeneration(file, crypt: 'sha512');
+              // String localChecksumShaLM = await isolatedChecksumGeneration(file, crypt: 'size-date');
+              // String eTag = Etag.fromFile(file);
+              // String eTag = etag(file);
+
+              localText += '\n\nRemote ETag: \n"$remoteChecksum"\n';
+              localText += 'Local Checksum [MD5]: "$localChecksumMd5"\n';
+              localText += 'Local Checksum [sha1]: "$localChecksumSha1"\n';
+              // localText += 'Local Checksum [sha256]: "$localChecksumSha256"\n\n';
+              // localText += 'Local Checksum [sha512]: "$localChecksumSha512"\n\n';
+              // localText += 'Local Checksum [size-date]: "$localChecksumShaLM"\n\n';
+              localText += 'Checksum Match: "${localChecksumMd5 == remoteChecksum}"\n';
             }
           }
         }
@@ -186,10 +268,10 @@ class _MyHomePageState extends State<MyHomePage> {
     int fileOriginSize = 0;
 
     /// GET ORIGIN FILE SIZE - BEGIN
-    Response response = await dio.head(url, options: Options()).timeout(const Duration(seconds: 20));
+    Response response = await dio.head(url).timeout(const Duration(seconds: 20));
     try {
       response = await dio.head(url);
-    } on io.SocketException catch (_) {
+    } on SocketException catch (_) {
       debugPrint('_getOriginFileSize() - TRY dio.head() - ERROR: - SocketException');
       return null;
     } on TimeoutException catch (_) {
@@ -213,17 +295,84 @@ class _MyHomePageState extends State<MyHomePage> {
     return fileOriginSize;
   }
 
+  Future<String> _getOriginFileChecksum(String url) async {
+    String checksum = '-';
+
+    /// GET ORIGIN FILE CHECKSUM - BEGIN
+    Response response = await dio.head(url, options: Options()).timeout(const Duration(seconds: 20));
+    try {
+      response = await dio.head(url);
+    } on SocketException catch (_) {
+      debugPrint('_getOriginFileChecksum() - TRY dio.head() - ERROR: - SocketException');
+      return checksum;
+    } on TimeoutException catch (_) {
+      debugPrint('_getOriginFileChecksum() - TRY dio.head() - ERROR:  - TimeoutException');
+      return checksum;
+    } catch (e) {
+      debugPrint('_getOriginFileChecksum() - TRY dio.head() - ERROR: "${e.toString()}"');
+      return checksum;
+      // rethrow;
+    }
+
+    checksum = response.headers.value('ETag') ?? '-';
+    /// GET ORIGIN FILE CHECKSUM - END
+
+    return checksum.replaceAll('"', '').trim();
+  }
+
   Future<int> _getMaxMemoryUsage() async {
     // debugPrint('_getMaxMemoryUsage()...');
 
     // final totalPhysicalMemory = SysInfo.getTotalPhysicalMemory();
-    final freePhysicalMemory = SysInfo.getFreePhysicalMemory();
+    // final freePhysicalMemory = SysInfo.getFreePhysicalMemory();
+    final freePhysicalMemory = system_info.SysInfo.getFreePhysicalMemory();
 
     // debugPrint('_getMaxMemoryUsage() - totalPhysicalMemory: "$totalPhysicalMemory" - ${filesize(totalPhysicalMemory)}');
     // debugPrint('_getMaxMemoryUsage() - freePhysicalMemory: "$freePhysicalMemory" - ${filesize(freePhysicalMemory)}');
 
     final maxMemoryUsage = (freePhysicalMemory * maxAvailableMemory).round();
     return maxMemoryUsage;
+  }
+
+  // int get availableCores => Platform.numberOfProcessors;
+  Future<int> getAvailableCores() async {
+    print('getAvailableCores()...');
+    int cores = 1;
+    if (kIsWeb) {
+      print('getAvailableCores() - Web');
+      WebBrowserInfo browserInfo = await deviceInfo.webBrowserInfo;
+      cores = browserInfo.hardwareConcurrency ?? 1;
+    } else if (Platform.isAndroid) {
+      print('getAvailableCores() - Android');
+      cores = Platform.numberOfProcessors;
+      // AndroidDeviceInfo androidInfo = await deviceInfo.androidInfo;
+      // cores = androidInfo.numberOfCores;
+    } else if (Platform.isIOS) {
+      print('getAvailableCores() - iOS');
+      cores = Platform.numberOfProcessors;
+      // IosDeviceInfo iosInfo = await deviceInfo.iosInfo;
+      // cores = iosInfo.processorCount;
+    } else if (Platform.isWindows) {
+      print('getAvailableCores() - Windows');
+      device_info.WindowsDeviceInfo windowsInfo = await deviceInfo.windowsInfo;
+      cores = windowsInfo.numberOfCores;
+    } else if (Platform.isMacOS) {
+      print('getAvailableCores() - MacOS');
+      device_info.MacOsDeviceInfo macosInfo = await deviceInfo.macOsInfo;
+      cores= macosInfo.activeCPUs;
+    } else if (Platform.isLinux) {
+      print('getAvailableCores() - Linux');
+      try {
+        String cpuInfo = await File('/proc/cpuinfo').readAsString();
+        cores = RegExp(r'processor').allMatches(cpuInfo).length;
+      } catch (e) {
+        print('Error al leer el archivo /proc/cpuinfo: $e');
+      }
+    } else {
+      print('Plataforma no soportada');
+    }
+    print('getAvailableCores()...DONE - cores: "$cores"');
+    return cores;
   }
 
   int _calculateOptimalMaxParallelDownloads(int fileSize, int maxMemoryUsage) {
@@ -335,6 +484,7 @@ class _MyHomePageState extends State<MyHomePage> {
     final File file = File(fileLocalRouteStr);
 
     String fileBasename = path.basename(fileLocalRouteStr);
+    String fileBasenameNoExt = path.basenameWithoutExtension(fileLocalRouteStr);
     String fileDir = path.dirname(fileLocalRouteStr);
     final bool fileLocalExists = file.existsSync();
     final int fileLocalSize = fileLocalExists ? file.lengthSync() : 0;
@@ -352,7 +502,7 @@ class _MyHomePageState extends State<MyHomePage> {
       optimalMaxParallelDownloads = _calculateOptimalMaxParallelDownloads(fileOriginSize, maxMemoryUsage);
       chunkSize = (chunkSize / optimalMaxParallelDownloads).ceil();
 
-      File chunkSizeFile = File('$fileDir/_chunkSize');
+      File chunkSizeFile = File('$fileDir/_chunkSize_$fileBasenameNoExt');
       if(!chunkSizeFile.existsSync()) {
         debugPrint('_download() - Creating chunkSizeFile...');
         chunkSizeFile.createSync(recursive: true);
@@ -363,7 +513,7 @@ class _MyHomePageState extends State<MyHomePage> {
         chunkSize = int.parse(chunkSizeFile.readAsStringSync());
       }
 
-      File optimalMaxParallelDownloadsFile = File('$fileDir/_maxParallelDownloads');
+      File optimalMaxParallelDownloadsFile = File('$fileDir/_maxParallelDownloads_$fileBasenameNoExt');
       if(!optimalMaxParallelDownloadsFile.existsSync()) {
         debugPrint('_download() - Creating optimalMaxParallelDownloadsFile...');
         optimalMaxParallelDownloadsFile.createSync(recursive: true);
@@ -435,6 +585,23 @@ class _MyHomePageState extends State<MyHomePage> {
           result.delete();
         }
         debugPrint('_download() - MERGING...DONE');
+
+        List<FileSystemEntity>? files;
+        String dir = path.dirname(fileLocalRouteStr);
+        final localDir = Directory(dir);
+        files = localDir.listSync(
+          recursive: true,
+          followLinks: false,
+        );
+        for (FileSystemEntity file in files) {
+          if (file is File) {
+            String filepath = file.path;
+            String basename = path.basename(filepath);
+            if(basename.startsWith('_')) {
+              file.delete();
+            }
+          }
+        }
       }
     } else {
       percentNotifier.value = List.from([ValueNotifier<double>(1.0)]);
@@ -602,7 +769,23 @@ class _MyHomePageState extends State<MyHomePage> {
                         const EdgeInsets.symmetric(horizontal: 32.0, vertical: 8.0),
                     child: TextField(
                       controller: urlTextEditingCtrl,
+                      // keyboardType: TextInputType.multiline,
+                      maxLines: null,
+                      decoration: InputDecoration(
+                        hintText: "Download URL",
+                        border: OutlineInputBorder(
+                            borderSide: BorderSide(width: 1, color: Theme.of(context).primaryColor)
+                        )
+                      ),
                     ),
+                  ),
+                  ElevatedButton(
+                    onPressed: () {
+                      fileUrl = urlTextEditingCtrl.text;
+                      fileLocalRouteStr = getLocalCacheFilesRoute(fileUrl, dir!);
+                      _checkOnOrigin(fileUrl: fileUrl);
+                    },
+                    child: const Text('Check URL on Origin'),
                   ),
                   ElevatedButton(
                     onPressed: () {
@@ -635,7 +818,6 @@ class _MyHomePageState extends State<MyHomePage> {
                   ValueListenableBuilder<bool>(
                       valueListenable: multipartNotifier,
                       builder: (context, isMultipart, _) {
-                        // return ValueListenableBuilder<List<double>?>(
                         return Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 32.0),
                           child: Stack(
@@ -695,19 +877,20 @@ class _MyHomePageState extends State<MyHomePage> {
                                       );
                                     } else {
                                       if(percentList == null || percentList.isEmpty == true) {
+                                      // if(percentList == null) {
                                         return Stack(
                                           alignment: Alignment.center,
-                                          children: const [
+                                          children: [
                                             SizedBox(
                                               width: 60,
                                               height: 60,
                                               child: CircularProgressIndicator(
-                                                value: 100,
+                                                value: percentList?.isEmpty == true ? null : 100,
                                                 // color: Colors.grey,
-                                                color: Colors.transparent,
+                                                color: percentList?.isEmpty == true ? null : Colors.transparent,
                                               ),
                                             ),
-                                            Text('0.00'),
+                                            const Text('0.00'),
                                           ],
                                         );
                                       }
@@ -771,6 +954,9 @@ class _MyHomePageState extends State<MyHomePage> {
                   ValueListenableBuilder<String?>(
                       valueListenable: localNotifier,
                       builder: (context, localData, _) {
+                        String text = (localData ?? '').toLowerCase();
+                        bool showDeleteBtn = !text.contains(noFilesStr.toLowerCase()) && !text.contains('${originStr.toLowerCase()} ');
+
                         return AnimatedContainer(
                           duration: const Duration(milliseconds: 250),
                           color: localData == null ? null : Colors.grey,
@@ -792,8 +978,7 @@ class _MyHomePageState extends State<MyHomePage> {
                                           Row(
                                             mainAxisSize: MainAxisSize.min,
                                             children: [
-                                              if (!localData.toLowerCase().contains(
-                                                  noFilesStr.toLowerCase()))
+                                              if (showDeleteBtn)
                                                 Row(
                                                   mainAxisSize: MainAxisSize.min,
                                                   children: [

@@ -36,7 +36,11 @@ dependencies:
   path_provider: ^2.0.11
   diacritic: ^0.1.1
   filesize: ^2.0.1
-  system_info2: ^3.0.2
+  system_info2: ^4.0.0
+  device_info_plus: ^9.0.1
+  # Implementations of SHA, MD5, and HMAC cryptographic functions
+  crypto: ^3.0.3
+#  universal_html: ^2.2.2
 
 dev_dependencies:
   flutter_test:
